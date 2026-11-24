@@ -304,7 +304,7 @@ func move(_ a: Args) -> Never {
 /// The injected dylib: $VSCREEN_PLACE_DYLIB, else next to the vscreen executable.
 let placeDylib: String = {
     if let p = ProcessInfo.processInfo.environment["VSCREEN_PLACE_DYLIB"], !p.isEmpty { return p }
-    let exe = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath()
+    let exe = (Bundle.main.executableURL ?? URL(fileURLWithPath: CommandLine.arguments[0])).resolvingSymlinksInPath()
     return exe.deletingLastPathComponent().appendingPathComponent("libvscreen_place.dylib").path
 }()
 
