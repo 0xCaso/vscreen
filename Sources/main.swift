@@ -420,6 +420,67 @@ func shot(_ a: Args) -> Never {
     exit(colours.count > 1 ? 0 : 6)
 }
 
+// MARK: - ensure
+
+/// State of a running virtual display named `name`, or nil when its create process or display is gone.
+func liveState(_ name: String) -> [String: Any]? {
+    guard let st = readState(name), let pid = st["pid"] as? Int32, let id = st["displayID"] as? UInt32,
+          processAlive(pid), processName(pid).hasSuffix("vscreen"), activeDisplays().contains(id) else { return nil }
+    return st
+}
+
+/// Reuses the long-lived display `name` (default "shared"), or starts it in its own session so it
+/// outlives the caller. Every create/destroy is a display change for window managers (Spaceman
+/// re-parks hidden windows and macOS can pull them back on screen), so agents share one display.
+func ensure(_ a: Args) -> Never {
+    let name = a.opts["name"] ?? "shared"
+    try? FileManager.default.createDirectory(at: stateDir, withIntermediateDirectories: true)
+    let lockFD = open(stateDir.appendingPathComponent(name + ".lock").path, O_CREAT | O_RDWR | O_CLOEXEC, 0o600)
+    guard lockFD >= 0 else { fail("cannot open lock file in \(stateDir.path)") }
+    flock(lockFD, LOCK_EX)
+    defer { flock(lockFD, LOCK_UN); close(lockFD) }
+
+    if var st = liveState(name) {
+        st["reused"] = true
+        printJSON(st); exit(0)
+    }
+    try? FileManager.default.removeItem(at: stateURL(name))
+
+    var argv = [CommandLine.arguments[0], "create", "--name", name,
+                "--width", String(a.int("width", 1920)), "--height", String(a.int("height", 1200)),
+                "--hz", String(a.int("hz", 60))]
+    if !a.flags.contains("lodpi") { argv.append("--hidpi") }
+    let logPath = stateDir.appendingPathComponent(name + ".log").path
+
+    var fa: posix_spawn_file_actions_t?
+    posix_spawn_file_actions_init(&fa)
+    posix_spawn_file_actions_addopen(&fa, 0, "/dev/null", O_RDONLY, 0)
+    posix_spawn_file_actions_addopen(&fa, 1, logPath, O_WRONLY | O_CREAT | O_TRUNC, 0o600)
+    posix_spawn_file_actions_adddup2(&fa, 1, 2)
+    var attr: posix_spawnattr_t?
+    posix_spawnattr_init(&attr)
+    // New session, and no inherited fds besides 0-2: the display outlives the caller and holds
+    // none of its pipes or locks open.
+    posix_spawnattr_setflags(&attr, Int16(POSIX_SPAWN_SETSID | POSIX_SPAWN_CLOEXEC_DEFAULT))
+    var pid: pid_t = 0
+    let cargs = argv.map { strdup($0) } + [nil]
+    let rc = posix_spawn(&pid, argv[0], &fa, &attr, cargs, environ)
+    cargs.forEach { free($0) }
+    posix_spawn_file_actions_destroy(&fa); posix_spawnattr_destroy(&attr)
+    guard rc == 0 else { fail("cannot start `vscreen create` (\(rc))") }
+
+    for _ in 0..<100 {
+        if var st = liveState(name) {
+            st["reused"] = false
+            printJSON(st); exit(0)
+        }
+        if !processAlive(pid) { break }
+        Thread.sleep(forTimeInterval: 0.1)
+    }
+    let log = (try? String(contentsOfFile: logPath, encoding: .utf8)) ?? ""
+    fail("shared display '\(name)' did not start; log \(logPath):\n\(log)")
+}
+
 // MARK: - destroy
 
 func destroy(_ a: Args) -> Never {
@@ -448,6 +509,9 @@ func destroy(_ a: Args) -> Never {
 
 let usage = """
 usage:
+  vscreen ensure [--name shared] [--width 1920] [--height 1200] [--lodpi] [--hz 60]
+      reuses the long-lived shared display or starts it detached (it outlives the caller); prints
+      its JSON with "reused". Agents use this and pass --name shared; never destroy it
   vscreen create [--width 1920] [--height 1200] [--hidpi] [--hz 60] [--name agent-screen]
       creates the display, prints JSON, keeps running until destroy/SIGTERM (run it in the background)
   vscreen launch [--display <id> | --name <n>] [--log f] [--cwd d] [--env K=V,K2=V2] -- <binary|.app> [args]
@@ -468,6 +532,7 @@ if args.flags.contains("help") || args.opts["help"] != nil || CommandLine.argume
 }
 switch args.cmd {
 case "create": create(args)
+case "ensure": ensure(args)
 case "move": move(args)
 case "launch": launch(args)
 case "shot": shot(args)

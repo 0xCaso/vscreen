@@ -24,15 +24,18 @@ PREFIX=~/.local/bin ./build.sh
 ## Usage
 
 ```bash
-vscreen create --width 1920 --height 1200 --hidpi > display.json &   # keeps running
-vscreen launch --log app.log -- path/to/App.app                     # windows open on the virtual display
-vscreen shot --pid <pid> --out shot.png
-vscreen destroy
+vscreen ensure > display.json                                        # shared display, started once and reused
+vscreen launch --name shared --log app.log -- path/to/App.app        # windows open on the virtual display
+vscreen shot --name shared --pid <pid> --out shot.png
+kill <pid>                                                           # leave the shared display running
 ```
+
+Each `create` and `destroy` is a display change: window managers that park hidden windows (Spaceman, for one) move them again, and macOS can flash them on your screen. `ensure` starts one long-lived display named `shared` in its own session and returns it to every later caller, so a day of agent runs makes one display change. Use `create`/`destroy --name <n>` only when you need a private display (another size, or an empty screen for an fps measurement).
 
 | Command | What it does |
 |---|---|
-| `create` | Creates the display, prints JSON, runs until `destroy` or SIGTERM |
+| `ensure` | Returns the shared display, or starts it detached so it outlives the caller. JSON includes `reused` |
+| `create` | Creates a private display, prints JSON, runs until `destroy` or SIGTERM |
 | `launch` | Starts an app with its windows on the virtual display and activation disabled. No Accessibility permission. Not for hardened-runtime or Apple apps |
 | `move` | Moves a running app's windows onto the display (needs Accessibility) |
 | `shot` | Captures the app's window with `screencapture -l` |
