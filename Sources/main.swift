@@ -484,7 +484,8 @@ func ensure(_ a: Args) -> Never {
 // MARK: - destroy
 
 func destroy(_ a: Args) -> Never {
-    let names = a.opts["name"].map { [$0] } ?? allStateNames()
+    // Without --name, every private display goes; the shared one (kept up by a LaunchAgent) stays.
+    let names = a.opts["name"].map { [$0] } ?? allStateNames().filter { $0 != "shared" }
     var results: [[String: Any]] = []
     for name in names {
         guard let st = readState(name), let pid = st["pid"] as? Int32, let id = st["displayID"] as? UInt32 else { continue }
@@ -524,6 +525,7 @@ usage:
   vscreen windows --pid <pid>      lists the app's on-screen windows (id, frame)
   vscreen list                     lists active displays and running virtual displays
   vscreen destroy [--name <n>]     stops the create process(es) and checks the display is gone
+                                   (without --name: all except "shared")
 """
 
 let args = Args(CommandLine.arguments)
